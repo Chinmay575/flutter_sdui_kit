@@ -169,19 +169,19 @@ void main() {
       expect(find.text('Hello SDUI'), findsOneWidget);
     });
 
-    testWidgets('renders from pre-parsed SduiScreen', (tester) async {
-      final screen = SduiScreen(
-        screen: 'test',
-        body: const SduiNode(
-          type: 'text',
-          props: {'content': 'Pre-parsed'},
-        ),
-      );
+    testWidgets('renders from pre-parsed JSON map', (tester) async {
+      final jsonStr = jsonEncode({
+        'screen': 'test',
+        'body': {
+          'type': 'text',
+          'props': {'content': 'Pre-parsed'},
+        },
+      });
 
       await tester.pumpWidget(
         Directionality(
           textDirection: TextDirection.ltr,
-          child: SduiWidget(screen: screen),
+          child: SduiWidget(json: jsonStr),
         ),
       );
 
@@ -388,12 +388,13 @@ void main() {
   // ── Default Registry completeness ─────────────────────────────────────
 
   group('createDefaultRegistry (v2)', () {
-    test('contains all built-in types including form + gesture', () {
+    test('contains all built-in types including form + gesture + layout wrappers', () {
       final registry = createDefaultRegistry();
       for (final type in [
         'text', 'column', 'row', 'padding', 'sizedbox', 'container',
         'scroll', 'image', 'button', 'icon', 'card', 'list', 'divider',
         'text_input', 'checkbox', 'switch', 'dropdown', 'gesture',
+        'expanded', 'center', 'safe_area', 'aspect_ratio', 'constrained_box',
       ]) {
         expect(registry.has(type), isTrue,
             reason: 'Missing builder for "$type"');
@@ -474,6 +475,350 @@ void main() {
       await tester.pump();
 
       expect(toggled, true);
+    });
+  });
+
+  // ── Layout safety tests ───────────────────────────────────────────────
+
+  group('Layout safety', () {
+    testWidgets('column inside scroll does not crash (infinite height)', (tester) async {
+      // This is the classic "unbounded height" scenario: scroll gives
+      // unbounded constraints to its child, and Column needs to size itself.
+      // Our Column uses MainAxisSize.min, so it safely shrink-wraps.
+      final jsonStr = jsonEncode({
+        'screen': 'test',
+        'body': {
+          'type': 'scroll',
+          'children': [
+            {
+              'type': 'column',
+              'children': [
+                {'type': 'text', 'props': {'content': 'Item 1'}},
+                {'type': 'text', 'props': {'content': 'Item 2'}},
+                {'type': 'text', 'props': {'content': 'Item 3'}},
+              ],
+            },
+          ],
+        },
+      });
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: SduiWidget(json: jsonStr),
+        ),
+      );
+
+      expect(find.text('Item 1'), findsOneWidget);
+      expect(find.text('Item 3'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('row with flex children distributes space', (tester) async {
+      final jsonStr = jsonEncode({
+        'screen': 'test',
+        'body': {
+          'type': 'row',
+          'children': [
+            {'type': 'text', 'props': {'content': 'Left', 'flex': 1}},
+            {'type': 'text', 'props': {'content': 'Right', 'flex': 2}},
+          ],
+        },
+      });
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: SduiWidget(json: jsonStr),
+        ),
+      );
+
+      expect(find.text('Left'), findsOneWidget);
+      expect(find.text('Right'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('expanded builder wraps child in Expanded', (tester) async {
+      final jsonStr = jsonEncode({
+        'screen': 'test',
+        'body': {
+          'type': 'column',
+          'children': [
+            {'type': 'text', 'props': {'content': 'Header'}},
+            {
+              'type': 'expanded',
+              'children': [
+                {'type': 'text', 'props': {'content': 'Fills space'}},
+              ],
+            },
+          ],
+        },
+      });
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: SduiWidget(json: jsonStr),
+        ),
+      );
+
+      expect(find.text('Fills space'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('nested column > column does not throw', (tester) async {
+      final jsonStr = jsonEncode({
+        'screen': 'test',
+        'body': {
+          'type': 'column',
+          'children': [
+            {
+              'type': 'column',
+              'children': [
+                {'type': 'text', 'props': {'content': 'Nested'}},
+              ],
+            },
+            {'type': 'text', 'props': {'content': 'After'}},
+          ],
+        },
+      });
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: SduiWidget(json: jsonStr),
+        ),
+      );
+
+      expect(find.text('Nested'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('constrained_box limits child size', (tester) async {
+      final jsonStr = jsonEncode({
+        'screen': 'test',
+        'body': {
+          'type': 'constrained_box',
+          'props': {'max_width': 200, 'max_height': 100},
+          'children': [
+            {'type': 'text', 'props': {'content': 'Constrained'}},
+          ],
+        },
+      });
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: SduiWidget(json: jsonStr),
+        ),
+      );
+
+      expect(find.text('Constrained'), findsOneWidget);
+      // Verify the ConstrainedBox widget exists and renders without error.
+      expect(find.byType(ConstrainedBox), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('renderer error boundary catches bad builder gracefully', (tester) async {
+      // Register a builder that throws, and verify the tree still renders
+      // the sibling node without crashing.
+      final registry = createDefaultRegistry();
+      registry.register('bad_widget', (node, ctx) {
+        throw Exception('Intentional test error');
+      });
+
+      final jsonStr = jsonEncode({
+        'screen': 'test',
+        'body': {
+          'type': 'column',
+          'children': [
+            {'type': 'bad_widget', 'props': {'foo': 'bar'}},
+            {'type': 'text', 'props': {'content': 'Survivor'}},
+          ],
+        },
+      });
+
+      final errors = <SduiError>[];
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: SduiWidget(
+            json: jsonStr,
+            registry: registry,
+            onError: errors.add,
+          ),
+        ),
+      );
+
+      // The bad widget is replaced with SizedBox.shrink, sibling renders fine.
+      expect(find.text('Survivor'), findsOneWidget);
+      // The error was forwarded to the onError callback.
+      expect(errors, hasLength(1));
+      expect(errors.first.type, SduiErrorType.render);
+      expect(errors.first.nodeType, 'bad_widget');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('horizontal list inside column with explicit height works', (tester) async {
+      final jsonStr = jsonEncode({
+        'screen': 'test',
+        'body': {
+          'type': 'column',
+          'children': [
+            {'type': 'text', 'props': {'content': 'Title'}},
+            {
+              'type': 'list',
+              'props': {
+                'direction': 'horizontal',
+                'height': 100,
+                'spacing': 8,
+              },
+              'children': [
+                {'type': 'text', 'props': {'content': 'A'}},
+                {'type': 'text', 'props': {'content': 'B'}},
+              ],
+            },
+          ],
+        },
+      });
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: MediaQuery(
+            data: const MediaQueryData(),
+            child: SduiWidget(json: jsonStr),
+          ),
+        ),
+      );
+
+      expect(find.text('Title'), findsOneWidget);
+      expect(find.text('A'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  // ── Error handling tests ──────────────────────────────────────────────
+
+  group('Error handling', () {
+    testWidgets('shows fallback when json is null', (tester) async {
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: SduiWidget(
+            json: null,
+            fallback: const Text('Loading…'),
+          ),
+        ),
+      );
+
+      expect(find.text('Loading…'), findsOneWidget);
+    });
+
+    testWidgets('shows fallback when json is empty', (tester) async {
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: SduiWidget(
+            json: '',
+            fallback: const Text('No data'),
+          ),
+        ),
+      );
+
+      expect(find.text('No data'), findsOneWidget);
+    });
+
+    testWidgets('calls onError and shows fallback on invalid JSON', (tester) async {
+      final errors = <SduiError>[];
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: SduiWidget(
+            json: '{ this is not valid json }',
+            onError: errors.add,
+            fallback: const Text('Parse failed'),
+          ),
+        ),
+      );
+
+      expect(find.text('Parse failed'), findsOneWidget);
+      expect(errors, hasLength(1));
+      expect(errors.first.type, SduiErrorType.parse);
+    });
+
+    testWidgets('errorWidgetBuilder replaces broken node with custom widget', (tester) async {
+      final registry = createDefaultRegistry();
+      registry.register('crasher', (node, ctx) {
+        throw StateError('boom');
+      });
+
+      final jsonStr = jsonEncode({
+        'screen': 'test',
+        'body': {
+          'type': 'column',
+          'children': [
+            {'type': 'crasher', 'props': {}},
+            {'type': 'text', 'props': {'content': 'OK'}},
+          ],
+        },
+      });
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: SduiWidget(
+            json: jsonStr,
+            registry: registry,
+            errorWidgetBuilder: (error) => Text('ERR: ${error.nodeType}'),
+          ),
+        ),
+      );
+
+      // The broken node is replaced with the custom error widget.
+      expect(find.text('ERR: crasher'), findsOneWidget);
+      // The sibling node still renders.
+      expect(find.text('OK'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('onError collects all errors from tree', (tester) async {
+      final registry = createDefaultRegistry();
+      registry.register('boom1', (n, c) => throw Exception('one'));
+      registry.register('boom2', (n, c) => throw Exception('two'));
+
+      final jsonStr = jsonEncode({
+        'screen': 'test',
+        'body': {
+          'type': 'column',
+          'children': [
+            {'type': 'boom1', 'props': {}},
+            {'type': 'boom2', 'props': {}},
+            {'type': 'text', 'props': {'content': 'Still here'}},
+          ],
+        },
+      });
+
+      final errors = <SduiError>[];
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: SduiWidget(
+            json: jsonStr,
+            registry: registry,
+            onError: errors.add,
+          ),
+        ),
+      );
+
+      expect(errors, hasLength(2));
+      expect(errors[0].nodeType, 'boom1');
+      expect(errors[1].nodeType, 'boom2');
+      expect(find.text('Still here'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
   });
 }

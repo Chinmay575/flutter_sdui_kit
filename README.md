@@ -3,133 +3,123 @@
 [![pub package](https://img.shields.io/pub/v/flutter_sdui_kit.svg)](https://pub.dev/packages/flutter_sdui_kit)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A **server-driven UI** framework for Flutter. Ship UI changes instantly — no app-store release required.
-
-Your server sends a JSON schema describing *what* to render; the SDK turns it into native Flutter widgets on the client.
+A **server-driven UI** framework for Flutter. Your server sends JSON → the SDK renders native widgets. Ship UI changes instantly — no app-store release.
 
 ---
 
-## Table of Contents
+## Quick Start
 
-- [Why SDUI?](#why-sdui)
-- [SDUI JSON Protocol](#sdui-json-protocol)
-  - [Screen Envelope](#screen-envelope)
-  - [Node Structure](#node-structure)
-  - [Actions](#actions)
-  - [Built-in Component Types](#built-in-component-types)
-- [Getting Started](#getting-started)
-  - [Install](#install)
-  - [Basic Usage](#basic-usage)
-- [Data Binding & Templates](#data-binding--templates)
-- [Conditional Visibility](#conditional-visibility)
-- [Action Handling](#action-handling)
-- [Custom Components](#custom-components)
-- [Architecture](#architecture)
-- [Implementing for Other Platforms](#implementing-for-other-platforms)
-- [API Reference](#api-reference)
+### 1. Install
+
+```yaml
+# pubspec.yaml
+dependencies:
+  flutter_sdui_kit: ^0.1.1
+```
+
+### 2. Render a screen (3 lines)
+
+```dart
+import 'package:flutter_sdui_kit/flutter_sdui_kit.dart';
+
+// That's it. Pass the JSON string from your API.
+SduiWidget(json: serverResponseJson)
+```
+
+### 3. Handle actions + pass data
+
+```dart
+// Create an action handler.
+final actions = ActionHandler();
+actions.register('navigate', (action, payload) {
+  Navigator.pushNamed(context, payload['route'] as String);
+});
+
+// Render with data for templates and visibility conditions.
+SduiWidget(
+  json: serverJson,
+  actionHandler: actions,
+  data: {
+    'user': {'name': 'Alice', 'is_premium': true},
+    'cart': {'count': 3},
+  },
+)
+```
+
+That's the complete setup. Everything below is reference.
 
 ---
 
-## Why SDUI?
+## How It Works
 
-| Problem | SDUI Solution |
-|---|---|
-| A/B tests require new releases | Server sends variant A or B — same binary |
-| Layout bug on production | Fix the JSON, users see it instantly |
-| Feature flags for UI | `visible_if` expressions, resolved client-side |
-| Consistent UI across platforms | One JSON schema, N client SDKs |
+```
+Server JSON  →  SduiWidget  →  Flutter Widgets
+```
+
+1. Server sends a JSON response with a `body` node tree
+2. `SduiWidget` parses it, resolves `{{templates}}`, evaluates `visible_if` conditions
+3. Each node's `type` maps to a builder function that returns a Flutter widget
+4. User interactions fire actions back to your registered handlers
 
 ---
 
-## SDUI JSON Protocol
+## JSON Protocol
 
-> **This protocol is framework-agnostic.** Any client SDK (Flutter, SwiftUI, Jetpack Compose, React Native) can implement it by following the same node/action/props contract described here.
+> **Framework-agnostic.** The same JSON works with any client SDK (Flutter, SwiftUI, Compose, React Native) that implements the protocol.
 
 ### Screen Envelope
-
-Every response from your SDUI API is a **screen envelope**:
 
 ```json
 {
   "screen": "home",
   "version": 1,
   "cache_ttl": 300,
-  "theme": {
-    "primary": "#6C63FF",
-    "background": "#FFFFFF",
-    "text": "#1A1A2E"
-  },
-  "body": { … }
+  "theme": { "primary": "#6C63FF", "background": "#FFFFFF", "text": "#1A1A2E" },
+  "body": { ... }
 }
 ```
 
-| Field | Type | Description |
-|---|---|---|
-| `screen` | `string` | Screen identifier (routing, analytics, caching) |
-| `version` | `int` | Schema version for client-side migration gates |
-| `cache_ttl` | `int` | Seconds this response may be cached locally |
-| `theme` | `object?` | Colour overrides — `primary`, `background`, `text` + any extras |
-| `body` | `node` | The root component node |
-
 ### Node Structure
 
-Every node follows the same shape:
+Every UI element is a **node**:
 
 ```json
 {
   "type": "text",
-  "props": {
-    "content": "Hello, {{user.name}}!",
-    "style": "heading",
-    "visible_if": "user.is_premium"
-  },
-  "action": {
-    "type": "navigate",
-    "payload": { "route": "/profile" }
-  },
+  "props": { "content": "Hello, {{user.name}}!", "visible_if": "user.is_premium" },
+  "action": { "type": "navigate", "payload": { "route": "/profile" } },
   "children": []
 }
 ```
 
 | Field | Type | Description |
 |---|---|---|
-| `type` | `string` | Component type identifier |
-| `props` | `object` | Arbitrary key-value properties for the component |
-| `action` | `object?` | Action to fire on user interaction |
-| `children` | `node[]` | Ordered child nodes |
+| `type` | `string` | Component type (e.g. `text`, `column`, `button`) |
+| `props` | `object` | Properties for the component |
+| `action` | `object?` | Action fired on user interaction |
+| `children` | `node[]` | Child nodes |
 
-### Actions
+---
 
-```json
-{
-  "type": "navigate",
-  "payload": { "route": "/shop" }
-}
-```
+## Built-in Components (23 types)
 
-The `type` string is resolved by the client's action handler registry. Common types:
-
-| Action Type | Typical Payload |
-|---|---|
-| `navigate` | `{ "route": "/path" }` |
-| `api_call` | `{ "endpoint": "/api/…", "method": "POST", "body": {…} }` |
-| `open_sheet` | `{ "screen": "filter_sheet" }` |
-| `input_changed` | `{ "field": "email", "value": "…" }` *(auto-fired by form components)* |
-
-### Built-in Component Types
-
-#### Layout
+### Layout
 
 | Type | Key Props |
 |---|---|
-| `column` | `spacing`, `cross_alignment`, `main_alignment` |
-| `row` | `spacing`, `cross_alignment`, `main_alignment`, `alignment` |
+| `column` | `spacing`, `cross_alignment`, `main_alignment`, `scroll` |
+| `row` | `spacing`, `cross_alignment`, `main_alignment`, `scroll` |
 | `padding` | `all`, `horizontal`, `vertical`, `left`, `right`, `top`, `bottom` |
 | `sizedbox` | `width`, `height` |
 | `container` | `background`, `corner_radius`, `width`, `height`, `padding` |
-| `scroll` | `direction` (`"horizontal"` / `"vertical"`) |
+| `scroll` | `direction` (`horizontal` / `vertical`) |
+| `safe_area` | `top`, `bottom`, `left`, `right` |
+| `expanded` | `flex`, `fit` (`tight` / `loose`) |
+| `center` | — |
+| `aspect_ratio` | `ratio` |
+| `constrained_box` | `min_width`, `max_width`, `min_height`, `max_height` |
 
-#### Content
+### Content
 
 | Type | Key Props |
 |---|---|
@@ -137,96 +127,45 @@ The `type` string is resolved by the client's action handler registry. Common ty
 | `image` | `url`, `aspect_ratio`, `corner_radius`, `fit` |
 | `button` | `label`, `variant` (`primary`/`outline`/`text`), `full_width`, `background`, `text_color`, `corner_radius` |
 | `icon` | `name`, `size`, `color` |
-
-#### Composite
-
-| Type | Key Props |
-|---|---|
 | `card` | `corner_radius`, `background`, `elevation`, `width` |
-| `list` | `direction`, `spacing`, `padding` |
+| `list` | `direction`, `spacing`, `padding`, `height`, `width` |
 | `divider` | `color`, `thickness` |
 
-#### Form
+### Form
+
+| Type | Key Props | Auto-fires |
+|---|---|---|
+| `text_input` | `placeholder`, `value`, `field`, `max_lines`, `obscure` | `input_changed` |
+| `checkbox` | `checked`, `label`, `field`, `size`, `active_color` | `input_changed` |
+| `switch` | `value`, `label`, `field`, `active_color` | `input_changed` |
+| `dropdown` | `options [{label,value}]`, `selected`, `placeholder`, `field` | `input_changed` |
+
+### Interaction
 
 | Type | Key Props |
 |---|---|
-| `text_input` | `placeholder`, `value`, `field`, `max_lines`, `obscure`, `border_color`, `corner_radius` |
-| `checkbox` | `checked`, `label`, `field`, `size`, `active_color` |
-| `switch` | `value`, `label`, `field`, `active_color` |
-| `dropdown` | `options` (`[{label, value}]`), `selected`, `placeholder`, `field` |
+| `gesture` | `behavior` (`opaque`/`translucent`/`defer`); requires `action` on node |
 
-#### Interaction
-
-| Type | Key Props |
-|---|---|
-| `gesture` | `behavior` (`"opaque"` / `"translucent"` / `"defer"`); requires `action` on the node |
+**Flex children:** Any child node can have `"flex": <int>` in its props to be wrapped in `Expanded` inside a `column`/`row`. Add `"flex_fit": "loose"` for `Flexible` instead.
 
 ---
 
-## Getting Started
+## Data Binding
 
-### Install
-
-```yaml
-dependencies:
-  flutter_sdui_kit: ^0.1.0
-```
-
-```bash
-flutter pub get
-```
-
-### Basic Usage
-
-```dart
-import 'package:flutter_sdui_kit/flutter_sdui_kit.dart';
-
-class MyScreen extends StatelessWidget {
-  final String serverJson; // JSON from your API
-
-  const MyScreen({super.key, required this.serverJson});
-
-  @override
-  Widget build(BuildContext context) {
-    return SduiWidget(json: serverJson);
-  }
-}
-```
-
-That's it. The `SduiWidget` parses the JSON, builds the widget tree using the built-in component registry, and renders it.
-
----
-
-## Data Binding & Templates
-
-Use `{{path.to.value}}` in any string prop. Provide a `data` map to resolve them:
+Use `{{path}}` in any string prop. Pass a `data` map to resolve:
 
 ```dart
 SduiWidget(
   json: serverJson,
-  data: {
-    'user': {'name': 'John', 'is_premium': true},
-    'cart': {'count': 3},
-  },
+  data: {'user': {'name': 'John'}, 'cart': {'count': 3}},
 )
 ```
-
-Server JSON:
 
 ```json
-{ "type": "text", "props": { "content": "Hello, {{user.name}}! You have {{cart.count}} items." } }
+{ "type": "text", "props": { "content": "Hello {{user.name}}! {{cart.count}} items." } }
 ```
 
-Renders: **Hello, John! You have 3 items.**
-
-You can also wrap the widget tree with `SduiDataProvider` to flow data from higher up:
-
-```dart
-SduiDataProvider(
-  data: {'user': {'name': 'Alice'}},
-  child: SduiWidget(json: screenJson),
-)
-```
+→ **Hello John! 3 items.**
 
 ---
 
@@ -235,32 +174,18 @@ SduiDataProvider(
 Add `visible_if` to any node's `props`:
 
 ```json
-{
-  "type": "text",
-  "props": {
-    "content": "Premium exclusive!",
-    "visible_if": "user.is_premium"
-  }
-}
+{ "type": "text", "props": { "content": "VIP only", "visible_if": "user.is_premium" } }
 ```
 
-Supported expressions:
+Supported: `truthy`, `!negation`, `==`, `!=`, `>`, `<`, `>=`, `<=`, `&&`, `||`
 
-| Expression | Example |
-|---|---|
-| Truthy | `"user.is_premium"` |
-| Negation | `"!cart.is_empty"` |
-| Equality | `"user.role == admin"` |
-| Inequality | `"user.role != guest"` |
-| Numeric | `"cart.count > 0"`, `"cart.count >= 5"` |
-| AND | `"user.is_premium && cart.count > 0"` |
-| OR | `"user.role == admin \|\| user.is_staff"` |
+```json
+"visible_if": "user.role == admin && cart.count > 0"
+```
 
 ---
 
 ## Action Handling
-
-Register handlers for action types your server sends:
 
 ```dart
 final actions = ActionHandler();
@@ -273,115 +198,229 @@ actions.register('api_call', (action, payload) async {
   await http.post(Uri.parse(payload['endpoint'] as String));
 });
 
-// Catch-all for unregistered action types
 actions.onUnhandled = (action, payload) {
-  debugPrint('Unhandled: ${action.type}');
+  debugPrint('Unknown action: ${action.type}');
 };
+```
 
+Form components auto-fire `input_changed` with `{"field": "...", "value": ...}`.
+
+---
+
+## Error Handling
+
+```dart
 SduiWidget(
   json: serverJson,
-  actionHandler: actions,
+
+  // Called for every error (parse, render, expression).
+  // Send to Crashlytics / Sentry / your logger.
+  onError: (error) => logger.warning('${error.type}: ${error.message}'),
+
+  // Replaces individual broken nodes (siblings keep rendering).
+  errorWidgetBuilder: (error) => Text('Error in ${error.nodeType}'),
+
+  // Shown when JSON is null, empty, or fails to parse entirely.
+  fallback: CircularProgressIndicator(),
 )
 ```
 
-Form components (`text_input`, `checkbox`, `switch`, `dropdown`) automatically fire `input_changed` actions with `{ "field": "…", "value": … }`.
+Errors never crash the tree. A broken node becomes `SizedBox.shrink()` (or your `errorWidgetBuilder`), and its siblings render normally.
 
 ---
 
 ## Custom Components
 
-Register your own component builders to extend the kit:
-
 ```dart
 final registry = createDefaultRegistry();
 
 registry.register('rating_stars', (node, context) {
-  final count = node.props['count'] as int? ?? 5;
   final filled = node.props['filled'] as int? ?? 0;
   return Row(
     mainAxisSize: MainAxisSize.min,
-    children: List.generate(count, (i) => Text(
-      i < filled ? '★' : '☆',
-      style: TextStyle(
-        fontSize: 20,
-        color: context.theme?.primary ?? const Color(0xFFFFD700),
-      ),
-    )),
+    children: List.generate(5, (i) => Text(i < filled ? '★' : '☆')),
   );
 });
 
-SduiWidget(
-  json: serverJson,
-  registry: registry,
+SduiWidget(json: serverJson, registry: registry)
+```
+
+Server sends: `{ "type": "rating_stars", "props": { "filled": 4 } }`
+
+---
+
+## State Management
+
+`SduiWidget` is a plain `StatelessWidget`. It has **zero opinions** about state management. It takes `json` and `data` as inputs — whenever those change, the UI updates. This works with everything:
+
+### setState (simplest)
+
+```dart
+class MyScreen extends StatefulWidget {
+  @override
+  State<MyScreen> createState() => _MyScreenState();
+}
+
+class _MyScreenState extends State<MyScreen> {
+  String? _json;
+  Map<String, dynamic> _data = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchScreen();
+  }
+
+  Future<void> _fetchScreen() async {
+    final response = await http.get(Uri.parse('https://api.example.com/screen/home'));
+    setState(() => _json = response.body);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final actions = ActionHandler();
+    actions.register('navigate', (a, p) {
+      Navigator.pushNamed(context, p['route'] as String);
+    });
+    actions.register('input_changed', (a, p) {
+      setState(() => _data = {..._data, p['field']: p['value']});
+    });
+
+    return SduiWidget(
+      json: _json,
+      actionHandler: actions,
+      data: _data,
+      fallback: Center(child: Text('Loading...')),
+    );
+  }
+}
+```
+
+### Riverpod
+
+```dart
+final screenProvider = FutureProvider<String>((ref) async {
+  final response = await http.get(Uri.parse('https://api.example.com/screen/home'));
+  return response.body;
+});
+
+final formDataProvider = StateProvider<Map<String, dynamic>>((ref) => {});
+
+class MyScreen extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final screenAsync = ref.watch(screenProvider);
+    final formData = ref.watch(formDataProvider);
+
+    final actions = ActionHandler();
+    actions.register('navigate', (a, p) {
+      Navigator.pushNamed(context, p['route'] as String);
+    });
+    actions.register('input_changed', (a, p) {
+      ref.read(formDataProvider.notifier).state = {
+        ...ref.read(formDataProvider),
+        p['field']: p['value'],
+      };
+    });
+
+    return screenAsync.when(
+      data: (json) => SduiWidget(json: json, actionHandler: actions, data: formData),
+      loading: () => Center(child: CircularProgressIndicator()),
+      error: (e, _) => Center(child: Text('Error: $e')),
+    );
+  }
+}
+```
+
+### Bloc / Cubit
+
+```dart
+class ScreenCubit extends Cubit<ScreenState> {
+  ScreenCubit() : super(ScreenLoading());
+
+  Future<void> load() async {
+    final response = await http.get(Uri.parse('https://api.example.com/screen/home'));
+    emit(ScreenLoaded(json: response.body));
+  }
+}
+
+// In widget:
+BlocBuilder<ScreenCubit, ScreenState>(
+  builder: (context, state) {
+    if (state is ScreenLoaded) {
+      return SduiWidget(json: state.json, actionHandler: actions);
+    }
+    return CircularProgressIndicator();
+  },
 )
 ```
 
-Your server can now send:
+### GetX / Provider / MobX / etc.
 
-```json
-{ "type": "rating_stars", "props": { "count": 5, "filled": 4 } }
+Same pattern — feed `json` and `data` from your store. `SduiWidget` rebuilds when its inputs change. No wrappers, no adapters, no lock-in.
+
+### Sharing data across nested SduiWidgets
+
+```dart
+SduiDataProvider(
+  data: {'user': {'name': 'Alice'}},
+  child: SduiWidget(json: screenJson),
+)
 ```
+
+Local `data` on `SduiWidget` overrides ancestor `SduiDataProvider` data for the same keys.
+
+---
+
+## Layout Safety
+
+The SDK handles common infinite-layout pitfalls automatically:
+
+| Pattern | How it's handled |
+|---|---|
+| Column in Column | `mainAxisSize: MainAxisSize.min` — no unbounded assertion |
+| Column in ScrollView | Same — Column sizes to content |
+| List in Column | `shrinkWrap: true` + `NeverScrollableScrollPhysics` |
+| Horizontal list in Column | Server sends `height` prop, SDK wraps in `SizedBox` |
+| Expanded outside Flex | Renderer error boundary catches and replaces with fallback |
+| Bad builder throws | Error boundary catches per-node, siblings keep rendering |
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  Server JSON                                                 │
-│  { screen, version, cache_ttl, theme, body }                 │
-└──────────────────┬───────────────────────────────────────────┘
-                   │ parse
-┌──────────────────▼───────────────────────────────────────────┐
-│  Models                                                      │
-│  SduiScreen → SduiNode tree → SduiAction, SduiTheme          │
-└──────────────────┬───────────────────────────────────────────┘
-                   │ render
-┌──────────────────▼───────────────────────────────────────────┐
-│  SduiRenderer                                                │
-│  ┌─────────────────┐  ┌──────────────┐  ┌─────────────────┐ │
-│  │ ComponentRegistry│  │TemplateResolv│  │ExpressionEvaluat│ │
-│  │ type → builder   │  │ {{path}} → v │  │ visible_if      │ │
-│  └────────┬────────┘  └──────────────┘  └─────────────────┘ │
-│           │ build                                            │
-│  ┌────────▼────────┐                                         │
-│  │ ComponentBuilder │ ← receives SduiNode + SduiContext       │
-│  └────────┬────────┘                                         │
-└───────────┼──────────────────────────────────────────────────┘
-            │
-┌───────────▼──────────────────────────────────────────────────┐
-│  Flutter Widget Tree                                         │
-│  Text, Column, Row, Image, GestureDetector, …                │
-└──────────────────────────────────────────────────────────────┘
+Server JSON  →  SduiScreen (model)  →  SduiRenderer  →  Flutter Widgets
+                     ↓                       ↓
+                SduiNode tree         ComponentRegistry
+                                      TemplateResolver
+                                      ExpressionEvaluator
+                                      ActionHandler
 ```
 
-**Key abstractions (framework-agnostic):**
-
-| Concept | Responsibility |
+| Concept | What it does |
 |---|---|
-| **Node** | Recursive data model with `type`, `props`, `children`, `action` |
-| **Component Registry** | Maps `type` strings to platform-native builder functions |
-| **Action Handler** | Dispatches `action.type` to registered callbacks |
-| **Template Resolver** | Interpolates `{{path}}` placeholders against a data map |
-| **Expression Evaluator** | Evaluates `visible_if` boolean expressions |
-| **Renderer** | Walks the node tree, resolves templates/conditions, calls builders |
-
-Any platform SDK (SwiftUI, Compose, React Native) can implement these same six abstractions to render the identical JSON protocol.
+| **SduiNode** | Recursive tree: `type`, `props`, `children`, `action` |
+| **ComponentRegistry** | Maps type string → builder function |
+| **ActionHandler** | Maps action type → callback |
+| **TemplateResolver** | `{{path}}` → value from data map |
+| **ExpressionEvaluator** | `visible_if` → boolean |
+| **SduiRenderer** | Walks tree, resolves templates/conditions, calls builders, catches errors |
 
 ---
 
 ## Implementing for Other Platforms
 
-The JSON protocol is designed to be **platform-agnostic**. To build an SDK for another framework:
+The JSON protocol is platform-agnostic. To build an SDK for SwiftUI / Compose / React Native:
 
-1. **Parse** the screen envelope into your platform's model objects (`Screen`, `Node`, `Action`, `Theme`).
-2. **Build a Component Registry** — a dictionary of `type` → native view builder.
-3. **Build an Action Handler** — a dictionary of `action.type` → callback.
-4. **Implement a Template Resolver** — regex replace `{{path}}` with data map lookups.
-5. **Implement an Expression Evaluator** — parse `visible_if` strings into booleans.
-6. **Walk the tree** — for each node, resolve templates → check visibility → look up builder → render.
+1. Parse the screen envelope into native models
+2. Build a component registry (type → native view builder)
+3. Build an action handler (action type → callback)
+4. Implement template resolution (regex `{{path}}`)
+5. Implement expression evaluation (`visible_if`)
+6. Walk the node tree: resolve → check visibility → build
 
-The `props` contract per component type (documented above) stays the same across all platforms.
+Same JSON, any platform.
 
 ---
 
@@ -391,32 +430,42 @@ The `props` contract per component type (documented above) stays the same across
 
 | Property | Type | Default | Description |
 |---|---|---|---|
-| `json` | `String?` | — | Raw JSON string (mutually exclusive with `screen`) |
-| `screen` | `SduiScreen?` | — | Pre-parsed model (mutually exclusive with `json`) |
-| `registry` | `ComponentRegistry?` | built-in | Component builder registry |
+| `json` | `String?` | **required** | JSON string from server |
+| `registry` | `ComponentRegistry?` | built-in (23 types) | Component builders |
 | `actionHandler` | `ActionHandler?` | no-op | Action dispatcher |
-| `data` | `Map<String, dynamic>` | `{}` | Data context for templates and conditions |
-| `errorWidget` | `Widget` | `SizedBox.shrink()` | Fallback when JSON fails to parse |
+| `data` | `Map<String, dynamic>` | `{}` | Data for templates + conditions |
+| `fallback` | `Widget` | `SizedBox.shrink()` | Shown when JSON is null/empty/invalid |
+| `onError` | `SduiErrorCallback?` | — | Called for every error |
+| `errorWidgetBuilder` | `SduiErrorWidgetBuilder?` | — | Replacement widget for broken nodes |
 
 ### ComponentRegistry
 
 | Method | Description |
 |---|---|
-| `register(type, builder)` | Register a single builder |
-| `registerAll(map)` | Register multiple builders |
+| `register(type, builder)` | Add a builder |
+| `registerAll(map)` | Add multiple builders |
 | `unregister(type)` | Remove a builder |
-| `setFallback(builder)` | Override the fallback for unknown types |
-| `has(type)` | Check if a type is registered |
-| `resolve(type)` | Get the builder (or fallback) |
+| `setFallback(builder)` | Override fallback for unknown types |
+| `has(type)` / `resolve(type)` | Check / get builder |
 
 ### ActionHandler
 
 | Method | Description |
 |---|---|
-| `register(type, handler)` | Register a handler for an action type |
-| `registerAll(map)` | Register multiple handlers |
+| `register(type, handler)` | Add a handler |
+| `registerAll(map)` | Add multiple handlers |
 | `handle(action)` | Dispatch an action |
-| `onUnhandled` | Catch-all callback for unknown types |
+| `onUnhandled` | Catch-all for unknown types |
+
+### SduiError
+
+| Property | Type |
+|---|---|
+| `type` | `SduiErrorType` (parse, render, unknownComponent, expression) |
+| `message` | `String` |
+| `nodeType` | `String?` |
+| `exception` | `Object?` |
+| `stackTrace` | `StackTrace?` |
 
 ---
 

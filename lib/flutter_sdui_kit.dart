@@ -20,6 +20,7 @@ export 'src/core/default_registry.dart';
 export 'src/core/expression_evaluator.dart';
 export 'src/core/template_resolver.dart';
 export 'src/core/sdui_data_provider.dart';
+export 'src/core/sdui_error.dart';
 
 // ── Styles ──────────────────────────────────────────────────────────────
 export 'src/styles/style_parser.dart';
@@ -33,6 +34,7 @@ export 'src/components/button_builder.dart';
 export 'src/components/common_builders.dart';
 export 'src/components/form_builders.dart';
 export 'src/components/gesture_builder.dart';
+export 'src/components/layout_helpers.dart';
 
 // ── Drop-in widget ──────────────────────────────────────────────────────
 export 'src/sdui_widget.dart';

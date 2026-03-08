@@ -43,11 +43,36 @@ class HomeScreen extends StatelessWidget {
       'cart': {'count': 3},
     };
 
-    // 3. Render the screen
+    // 3. Render the screen — just pass the JSON string, that's it!
     return SduiWidget(
       json: _sampleJson,
       actionHandler: actions,
       data: data,
+
+      // 4. Error handling — all errors are forwarded to you
+      onError: (error) {
+        // ignore: avoid_print
+        print('SDUI error: ${error.type.name} — ${error.message}');
+        // Send to Crashlytics / Sentry / your analytics
+      },
+
+      // 5. Fallback widget when JSON is null / empty / fails to parse
+      fallback: const Center(
+        child: Text('Loading screen…'),
+      ),
+
+      // 6. Per-node error widget when a single component fails to render
+      errorWidgetBuilder: (error) => Container(
+        padding: const EdgeInsets.all(8),
+        decoration: const BoxDecoration(
+          color: Color(0x22FF0000),
+          borderRadius: BorderRadius.all(Radius.circular(4)),
+        ),
+        child: Text(
+          'Component "${error.nodeType}" failed',
+          style: const TextStyle(color: Color(0xFFCC0000), fontSize: 12),
+        ),
+      ),
     );
   }
 }

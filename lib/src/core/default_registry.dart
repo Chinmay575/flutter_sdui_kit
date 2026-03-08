@@ -26,6 +26,11 @@ ComponentRegistry createDefaultRegistry() {
     'sizedbox': sizedBoxBuilder,
     'container': containerBuilder,
     'scroll': scrollBuilder,
+    'expanded': expandedBuilder,
+    'center': centerBuilder,
+    'safe_area': safeAreaBuilder,
+    'aspect_ratio': aspectRatioBuilder,
+    'constrained_box': constrainedBoxBuilder,
 
     // Content
     'text': textBuilder,

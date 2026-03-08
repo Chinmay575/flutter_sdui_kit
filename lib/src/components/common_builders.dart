@@ -8,6 +8,9 @@ import '../styles/style_parser.dart';
 ///
 /// Supported props:
 /// - `direction` (String) — "horizontal" or "vertical" (default)
+///
+/// **Layout safety:** the inner Column/Row uses `MainAxisSize.min` so it
+/// only claims the space its children need, preventing unbounded-axis errors.
 Widget scrollBuilder(SduiNode node, SduiContext context) {
   final isHorizontal = node.props['direction'] == 'horizontal';
   final children = context.renderChildren(node.children);
@@ -33,6 +36,13 @@ Widget scrollBuilder(SduiNode node, SduiContext context) {
 /// - `direction` (String) — "horizontal" or "vertical" (default)
 /// - `spacing` (num) — gap between items
 /// - `padding` (Map) — outer padding
+/// - `item_extent` (num) — fixed item size for better perf with [ListView.builder]
+///
+/// Uses [ListView.builder] for efficient rendering of long lists.
+/// Wraps the builder in [SizedBox] with explicit `height` / `width` when the
+/// list lives inside an unconstrained axis (e.g. a horizontal list inside
+/// a Column). The server can send `"height"` / `"width"` props to size the
+/// list explicitly.
 Widget listBuilder(SduiNode node, SduiContext context) {
   final isHorizontal = node.props['direction'] == 'horizontal';
   final spacing = (node.props['spacing'] as num?)?.toDouble() ?? 0;
@@ -40,26 +50,46 @@ Widget listBuilder(SduiNode node, SduiContext context) {
       ? StyleParser.edgeInsetsFromProps(
           node.props['padding'] as Map<String, dynamic>)
       : EdgeInsets.zero;
+  final itemExtent = (node.props['item_extent'] as num?)?.toDouble();
+  final width = (node.props['width'] as num?)?.toDouble();
+  final height = (node.props['height'] as num?)?.toDouble();
 
   final children = context.renderChildren(node.children);
-  final spaced = <Widget>[];
-  for (var i = 0; i < children.length; i++) {
-    spaced.add(children[i]);
-    if (spacing > 0 && i < children.length - 1) {
-      spaced.add(SizedBox(
-        width: isHorizontal ? spacing : 0,
-        height: isHorizontal ? 0 : spacing,
-      ));
-    }
-  }
 
-  return SingleChildScrollView(
+  // Use ListView.builder for better performance with many children.
+  Widget list = ListView.builder(
     scrollDirection: isHorizontal ? Axis.horizontal : Axis.vertical,
     padding: padding,
-    child: isHorizontal
-        ? Row(mainAxisSize: MainAxisSize.min, children: spaced)
-        : Column(mainAxisSize: MainAxisSize.min, children: spaced),
+    itemExtent: itemExtent,
+    shrinkWrap: true,
+    // shrinkWrap + NeverScrollableScrollPhysics makes the list play
+    // nicely when nested inside another scrollable. If it IS the
+    // primary scrollable the user can override via a wrapper scroll.
+    physics: const NeverScrollableScrollPhysics(),
+    itemCount: children.length + (spacing > 0 ? children.length - 1 : 0),
+    itemBuilder: (_, index) {
+      if (spacing > 0) {
+        // Even indices → real children, odd indices → spacers.
+        if (index.isOdd) {
+          return SizedBox(
+            width: isHorizontal ? spacing : 0,
+            height: isHorizontal ? 0 : spacing,
+          );
+        }
+        return children[index ~/ 2];
+      }
+      return children[index];
+    },
   );
+
+  // Constrain the cross-axis if the server provides explicit dimensions.
+  // This prevents "unbounded height" when a horizontal list sits inside a
+  // Column (or "unbounded width" for a vertical list inside a Row).
+  if (width != null || height != null) {
+    list = SizedBox(width: width, height: height, child: list);
+  }
+
+  return list;
 }
 
 /// Builds a card container.
@@ -177,4 +207,122 @@ String _iconFallbackChar(String name) {
     'settings' => '⚙️',
     _ => '•',
   };
+}
+
+// ─── Layout-aware wrappers ──────────────────────────────────────────────
+
+/// Builds a [SafeArea] wrapper.
+///
+/// Supported props:
+/// - `top` (bool) — default `true`
+/// - `bottom` (bool) — default `true`
+/// - `left` (bool) — default `true`
+/// - `right` (bool) — default `true`
+Widget safeAreaBuilder(SduiNode node, SduiContext context) {
+  final children = context.renderChildren(node.children);
+  final child = children.length == 1
+      ? children.first
+      : Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: children,
+        );
+
+  return SafeArea(
+    top: node.props['top'] as bool? ?? true,
+    bottom: node.props['bottom'] as bool? ?? true,
+    left: node.props['left'] as bool? ?? true,
+    right: node.props['right'] as bool? ?? true,
+    child: child,
+  );
+}
+
+/// Builds an [Expanded] or [Flexible] wrapper.
+///
+/// This is the JSON-side way to tell the renderer "this child should fill
+/// remaining space in its parent Row/Column."
+///
+/// Supported props:
+/// - `flex` (int) — flex factor, default 1
+/// - `fit` (String) — "tight" (Expanded) or "loose" (Flexible), default "tight"
+///
+/// **Note:** Also supported inline via `"flex"` prop on any child node —
+/// see [layout_builders.dart]. This builder is for when you want an explicit
+/// `expanded` node in the JSON.
+Widget expandedBuilder(SduiNode node, SduiContext context) {
+  final flex = (node.props['flex'] as num?)?.toInt() ?? 1;
+  final isLoose = node.props['fit'] == 'loose';
+
+  final children = context.renderChildren(node.children);
+  final child = children.length == 1
+      ? children.first
+      : Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: children,
+        );
+
+  return isLoose
+      ? Flexible(flex: flex, child: child)
+      : Expanded(flex: flex, child: child);
+}
+
+/// Builds a [Center] wrapper.
+///
+/// Simple but frequently needed to center content without specifying
+/// alignment on the parent.
+Widget centerBuilder(SduiNode node, SduiContext context) {
+  final children = context.renderChildren(node.children);
+  final child = children.length == 1
+      ? children.first
+      : Column(
+          mainAxisSize: MainAxisSize.min,
+          children: children,
+        );
+
+  return Center(child: child);
+}
+
+/// Builds an [AspectRatio] wrapper.
+///
+/// Supported props:
+/// - `ratio` (num) — the width:height ratio (e.g. 1.78 for 16:9)
+Widget aspectRatioBuilder(SduiNode node, SduiContext context) {
+  final ratio = (node.props['ratio'] as num?)?.toDouble() ?? 1.0;
+  final children = context.renderChildren(node.children);
+  final child = children.isNotEmpty ? children.first : const SizedBox.shrink();
+
+  return AspectRatio(
+    aspectRatio: ratio,
+    child: child,
+  );
+}
+
+/// Builds a [ConstrainedBox] wrapper for explicit min/max sizing.
+///
+/// Supported props:
+/// - `min_width` (num)
+/// - `max_width` (num)
+/// - `min_height` (num)
+/// - `max_height` (num)
+Widget constrainedBoxBuilder(SduiNode node, SduiContext context) {
+  final minWidth = (node.props['min_width'] as num?)?.toDouble() ?? 0;
+  final maxWidth =
+      (node.props['max_width'] as num?)?.toDouble() ?? double.infinity;
+  final minHeight = (node.props['min_height'] as num?)?.toDouble() ?? 0;
+  final maxHeight =
+      (node.props['max_height'] as num?)?.toDouble() ?? double.infinity;
+
+  final children = context.renderChildren(node.children);
+  final child = children.isNotEmpty ? children.first : const SizedBox.shrink();
+
+  return ConstrainedBox(
+    constraints: BoxConstraints(
+      minWidth: minWidth,
+      maxWidth: maxWidth,
+      minHeight: minHeight,
+      maxHeight: maxHeight,
+    ),
+    child: child,
+  );
 }
